@@ -30,7 +30,7 @@ WEBSITE_NAME="BernKing Blog"
 WEBSITE_URL=https://bernking.xyz/
 MAX_SIMULTANEOUS_GAMES=3
 LOOP_WAIT_TIME=120
-SEASON=2023
+SEASON=2025
 IMPORTANT_LEAGUES=5"""
     try:
         env_file = _env_path()
@@ -165,7 +165,7 @@ class SetupWindow(QMainWindow):
             'WEBSITE_URL': 'Website URL',
             'MAX_SIMULTANEOUS_GAMES': 'Max Simultaneous Games (default: 3)',
             'LOOP_WAIT_TIME': 'Loop Wait Time (default: 120)',
-            'SEASON': 'Season Year (e.g., 2023)'
+            'SEASON': 'Season Year (e.g., 2025)'
         }
         
         for var, desc in env_vars.items():
@@ -395,7 +395,7 @@ class SetupWindow(QMainWindow):
             try:
                 season = int(season_text) if season_text else None
             except ValueError:
-                QMessageBox.warning(self, "Invalid Season", "Please enter a valid numeric season year (e.g., 2023).")
+                QMessageBox.warning(self, "Invalid Season", "Please enter a valid numeric season year (e.g., 2025).")
                 return
 
             # Run the functions sequentially
@@ -544,7 +544,7 @@ class SetupWindow(QMainWindow):
                 try:
                     season = int(season_text) if season_text else None
                 except ValueError:
-                    raise ValueError("Invalid season. Enter a numeric year, e.g., 2023.")
+                    raise ValueError("Invalid season. Enter a numeric year, e.g., 2025.")
 
                 get_league_status(temp_dir=temp_dir, season=season)
                 
@@ -582,8 +582,7 @@ class SetupWindow(QMainWindow):
                     
                     if not leagues_data['leagues']:
                         raise ValueError(
-                            f"No leagues found for season {selected_season}. If you're on the free API plan, "
-                            "try season 2023."
+                            f"No leagues found for season {selected_season}."
                         )
                     
                     self.populate_leagues(leagues_data)

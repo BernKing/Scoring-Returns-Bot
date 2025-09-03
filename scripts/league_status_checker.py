@@ -31,8 +31,7 @@ def get_league_status(temp_dir=None, season: int = None):
         # Handle empty responses to surface plan/season issues
         if not data or ('response' in data and len(data.get('response', [])) == 0):
             msg = (
-                f"No leagues returned for season {season}. If you're on the free API plan, "
-                "try setting SEASON=2023 in your .env or select 2023 in the GUI."
+                f"No leagues returned for season {season}."
             )
             print(f"⚠️ {msg}")
             # Still save the empty payload for transparency
