@@ -5,15 +5,15 @@ sys.path.append(str(Path(__file__).parent.parent))
 import requests
 import json
 from time import sleep, time
-from configs.config import base_url, headers, IMPORTANT_LEAGUES, LEAGUE_STATUS, FIXTURES_PATH, STANDINGS_PATH
+from configs.config import base_url, headers, IMPORTANT_LEAGUES, LEAGUE_STATUS, FIXTURES_PATH, STANDINGS_PATH, SEASON
 from scripts.setup_directories import get_executable_dir
 
-def get_league_status(temp_dir=None):
+def get_league_status(temp_dir=None, season: int = None):
     """
     Fetches current league status data from API and saves to JSON.
     
     Makes GET request to /leagues endpoint with:
-    - season: 2024
+    - season: <configured or provided>
     - current: true
     Parameters:
     - temp_dir (Path): Optional temporary directory for GUI mode
@@ -21,12 +21,21 @@ def get_league_status(temp_dir=None):
     Saves response to:
     {LEAGUE_STATUS}/league_status.json
     """
-    params = {'season': 2024, 'current': "true"}
+    season = season if season is not None else SEASON
+    params = {'season': season, 'current': "true"}
     fixtures_url = base_url + "/leagues"
     response = requests.get(fixtures_url, headers=headers, params=params)
 
     if response.status_code == 200:
         data = response.json()
+        # Handle empty responses to surface plan/season issues
+        if not data or ('response' in data and len(data.get('response', [])) == 0):
+            msg = (
+                f"No leagues returned for season {season}. If you're on the free API plan, "
+                "try setting SEASON=2023 in your .env or select 2023 in the GUI."
+            )
+            print(f"⚠️ {msg}")
+            # Still save the empty payload for transparency
         file_name = (temp_dir / "league_status.json") if temp_dir else (LEAGUE_STATUS / "league_status.json")
         print(f"Saving league status to: {file_name.absolute()}")
         with open(file_name, 'w', encoding='utf-8') as f:
@@ -35,7 +44,10 @@ def get_league_status(temp_dir=None):
         print("League status fetched successfully.")
     else:
         print(f"Error fetching league status: {response.status_code}")
-        raise Exception(f"API request failed with status code {response.status_code}")
+        hint = (
+            "Your API key/plan may not allow the selected season. "
+        )
+        raise Exception(f"API request failed with status code {response.status_code}. {hint}")
 
 def parse_status_fixtures_available():
     """
@@ -67,7 +79,7 @@ def parse_status_fixtures_available():
                     
     return stats_availables
 
-def get_fixtures_file(stats_availables, important_league):
+def get_fixtures_file(stats_availables, important_league, season: int = None):
     """
     Downloads fixture data for specified leagues and saves to JSON files.
     
@@ -86,7 +98,8 @@ def get_fixtures_file(stats_availables, important_league):
         if int(league_id) not in important_league:
             continue      
 
-        params = {'league': league_id, 'season': 2024, 'timezone' : "Europe/London"}
+        use_season = season if season is not None else SEASON
+        params = {'league': league_id, 'season': use_season, 'timezone' : "Europe/London"}
         fixtures_url = base_url + "/fixtures"
         response = requests.get(fixtures_url, headers=headers, params=params)
 
@@ -100,7 +113,7 @@ def get_fixtures_file(stats_availables, important_league):
         else:
             print(f"Error fetching fixtures for {league_name}: {response.status_code}")
 
-def get_league_standings(stats_availables, important_league):
+def get_league_standings(stats_availables, important_league, season: int = None):
     """
     Downloads standings data for specified leagues and saves to JSON files.
     
@@ -119,7 +132,8 @@ def get_league_standings(stats_availables, important_league):
         if int(league_id) not in important_league:
             continue    
              
-        params = {'league': league_id, 'season': 2024}
+        use_season = season if season is not None else SEASON
+        params = {'league': league_id, 'season': use_season}
         standings_url = base_url + "/standings"
         response = requests.get(standings_url, headers=headers, params=params)
 
@@ -142,10 +156,10 @@ if __name__ == "__main__":
     print(f"Fixtures: {FIXTURES_PATH.absolute()}")
     print(f"Standings: {STANDINGS_PATH.absolute()}\n")
     
-    get_league_status()
+    get_league_status(season=SEASON)
     stats_availables = parse_status_fixtures_available()
     important_league = IMPORTANT_LEAGUES
 
-    get_fixtures_file(stats_availables, important_league)
-    get_league_standings(stats_availables, important_league)
+    get_fixtures_file(stats_availables, important_league, season=SEASON)
+    get_league_standings(stats_availables, important_league, season=SEASON)
     print("\nAll data fetched successfully.")

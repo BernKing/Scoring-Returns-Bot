@@ -12,8 +12,12 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from scripts.setup_directories import create_directories, get_executable_dir
+from dotenv import load_dotenv
 import json
 from configs.config import LEAGUES_JSON_PATH
+
+def _env_path() -> Path:
+    return Path(get_executable_dir()) / ".env"
 
 def create_default_env():
     default_env = """BOT_TOKEN=your_discord_bot_token_here
@@ -26,15 +30,16 @@ WEBSITE_NAME="BernKing Blog"
 WEBSITE_URL=https://bernking.xyz/
 MAX_SIMULTANEOUS_GAMES=3
 LOOP_WAIT_TIME=120
+SEASON=2023
 IMPORTANT_LEAGUES=5"""
-    
     try:
-        with open(".env", "w") as f:
+        env_file = _env_path()
+        with open(env_file, "w", encoding="utf-8") as f:
             f.write(default_env)
     except Exception as e:
         print(f"Failed to create default .env file: {str(e)}")
 
-if not os.path.exists(".env"):
+if not _env_path().exists():
     create_default_env()
 
 def load_available_leagues():
@@ -121,6 +126,8 @@ class SetupWindow(QMainWindow):
         # Create tab widget
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
+        # Initialize session flag early to avoid signal-trigger race
+        self.env_saved_in_session = False
         
         # Initialize tabs
         self.init_env_tab()
@@ -157,7 +164,8 @@ class SetupWindow(QMainWindow):
             'WEBSITE_NAME': 'Website Name',
             'WEBSITE_URL': 'Website URL',
             'MAX_SIMULTANEOUS_GAMES': 'Max Simultaneous Games (default: 3)',
-            'LOOP_WAIT_TIME': 'Loop Wait Time (default: 120)'
+            'LOOP_WAIT_TIME': 'Loop Wait Time (default: 120)',
+            'SEASON': 'Season Year (e.g., 2023)'
         }
         
         for var, desc in env_vars.items():
@@ -281,8 +289,9 @@ class SetupWindow(QMainWindow):
         self.tabs.addTab(bot_tab, "Bot Control")
 
     def load_env_vars(self):
-        if os.path.exists(".env"):
-            with open(".env", "r") as f:
+        env_file = _env_path()
+        if env_file.exists():
+            with open(env_file, "r", encoding="utf-8") as f:
                 for line in f:
                     if "=" in line:
                         key, value = line.strip().split("=", 1)
@@ -295,44 +304,66 @@ class SetupWindow(QMainWindow):
                                     self.league_checkboxes[league_id.strip()].setChecked(True)
 
     def save_env(self):
-        env_content = ""
+        env_file = _env_path()
+
+        # Load existing .env to preserve unspecified keys
+        existing = {}
+        if env_file.exists():
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if "=" in line and not line.strip().startswith("#"):
+                        k, v = line.strip().split("=", 1)
+                        existing[k] = v
+
+        # Apply updates from inputs (only non-empty values override)
         for var, input_field in self.env_inputs.items():
-            value = input_field.text()
+            value = input_field.text().strip()
             if value:
-                env_content += f"{var}={value}\n"
-        
-        # Add selected leagues
-        selected_leagues = []
-        for league_id, checkbox in self.league_checkboxes.items():
-            if checkbox.isChecked():
-                selected_leagues.append(league_id)
-        
+                existing[var] = value
+
+        # Update selected leagues
+        selected_leagues = [lid for lid, cb in self.league_checkboxes.items() if cb.isChecked()]
         if selected_leagues:
-            env_content += f"IMPORTANT_LEAGUES={','.join(selected_leagues)}\n"
-        
+            existing["IMPORTANT_LEAGUES"] = ",".join(selected_leagues)
+
+        # Write back
         try:
-            with open(".env", "w") as f:
-                f.write(env_content)
+            with open(env_file, "w", encoding="utf-8") as f:
+                for k, v in existing.items():
+                    f.write(f"{k}={v}\n")
+
+            # Hot-reload env into current process and configs
+            load_dotenv(dotenv_path=env_file, override=True)
+            try:
+                import importlib, configs.config as cfg
+                import scripts.league_status_checker as lsc
+                importlib.reload(cfg)
+                importlib.reload(lsc)
+            except Exception:
+                pass
+
             self.has_unsaved_changes = False
-            
+            # Mark that a successful save occurred in this session
+            self.env_saved_in_session = True
+            # Re-validate to potentially enable gated actions
+            self.validate_configs()
+
             # Different behavior for exe vs script
             if getattr(sys, 'frozen', False):
-                # Running as exe - do auto-restart
                 QMessageBox.information(
-                    self, 
-                    "Restarting", 
-                    "Environment variables saved successfully! The application will now restart."
+                    self,
+                    "Restarting",
+                    "Environment variables saved! The application will now restart."
                 )
                 subprocess.Popen([sys.executable])
                 QApplication.quit()
             else:
-                # Running as script - just show message
                 QMessageBox.information(
-                    self, 
-                    "Saved", 
-                    "Environment variables saved successfully! Please restart the application for changes to take effect."
+                    self,
+                    "Saved",
+                    "Environment saved and reloaded. You can continue without restarting."
                 )
-            
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save environment variables: {str(e)}")
 
@@ -359,11 +390,19 @@ class SetupWindow(QMainWindow):
                 if checkbox.isChecked()
             ]
             
+            # Determine season
+            season_text = self.env_inputs.get('SEASON').text().strip() if 'SEASON' in self.env_inputs else ''
+            try:
+                season = int(season_text) if season_text else None
+            except ValueError:
+                QMessageBox.warning(self, "Invalid Season", "Please enter a valid numeric season year (e.g., 2023).")
+                return
+
             # Run the functions sequentially
-            get_league_status()
+            get_league_status(season=season)
             stats_availables = parse_status_fixtures_available()
-            get_league_standings(stats_availables, important_leagues)
-            get_fixtures_file(stats_availables, important_leagues)
+            get_league_standings(stats_availables, important_leagues, season=season)
+            get_fixtures_file(stats_availables, important_leagues, season=season)
             
             self.status_text.append("✅ League status checked successfully!")
         except Exception as e:
@@ -486,7 +525,8 @@ class SetupWindow(QMainWindow):
     def validate_configs(self):
         """Enable fetch leagues button only when all configs are set"""
         all_filled = all(input_field.text().strip() for input_field in self.env_inputs.values())
-        self.fetch_leagues_btn.setEnabled(all_filled)
+        # Allow fetching leagues only after a successful Save action
+        self.fetch_leagues_btn.setEnabled(all_filled and self.env_saved_in_session)
 
     def fetch_leagues(self):
         """Fetch and display available leagues"""
@@ -495,11 +535,18 @@ class SetupWindow(QMainWindow):
             exe_dir = get_executable_dir()
             temp_dir = Path(exe_dir) / "temp"
             temp_dir.mkdir(exist_ok=True)
-            
+
             try:
                 from scripts.league_status_checker import get_league_status
                 status_file = temp_dir / "league_status.json"
-                get_league_status(temp_dir=temp_dir)
+                # Determine season from env inputs
+                season_text = self.env_inputs.get('SEASON').text().strip() if 'SEASON' in self.env_inputs else ''
+                try:
+                    season = int(season_text) if season_text else None
+                except ValueError:
+                    raise ValueError("Invalid season. Enter a numeric year, e.g., 2023.")
+
+                get_league_status(temp_dir=temp_dir, season=season)
                 
                 if not status_file.exists():
                     raise FileNotFoundError(f"League status file not created at {status_file}")
@@ -507,6 +554,7 @@ class SetupWindow(QMainWindow):
                 with open(status_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     
+                    selected_season = season
                     leagues_data = {
                         "leagues": [
                             {
@@ -515,7 +563,7 @@ class SetupWindow(QMainWindow):
                                 "country": league['country']['name']
                             }
                             for league in data['response']
-                            if any(s['year'] == 2024 and 
+                            if any(s['year'] == selected_season and 
                                   s['coverage']['fixtures']['events'] and
                                   s['coverage']['standings']
                                   for s in league['seasons'])
@@ -533,7 +581,10 @@ class SetupWindow(QMainWindow):
                     }
                     
                     if not leagues_data['leagues']:
-                        raise ValueError("No leagues found in the data")
+                        raise ValueError(
+                            f"No leagues found for season {selected_season}. If you're on the free API plan, "
+                            "try season 2023."
+                        )
                     
                     self.populate_leagues(leagues_data)
                     self.league_frame.show()
@@ -563,8 +614,9 @@ class SetupWindow(QMainWindow):
         
         # Get currently selected leagues from .env
         selected_leagues = set()
-        if os.path.exists(".env"):
-            with open(".env", "r") as f:
+        env_file = _env_path()
+        if env_file.exists():
+            with open(env_file, "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("IMPORTANT_LEAGUES="):
                         _, value = line.strip().split("=", 1)
@@ -594,6 +646,10 @@ class SetupWindow(QMainWindow):
 
     def mark_unsaved_changes(self):
         self.has_unsaved_changes = True
+        # Any change invalidates the last saved state
+        self.env_saved_in_session = False
+        # Reflect state in UI controls
+        self.validate_configs()
 
     def check_unsaved_changes(self, new_tab_index):
         if self.has_unsaved_changes and self.tabs.widget(new_tab_index) != self.tabs.widget(0):  # 0 is env tab

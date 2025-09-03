@@ -3,8 +3,6 @@ import sys
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 base_url = "https://v3.football.api-sports.io"
 
 headers = {
@@ -52,6 +50,9 @@ IMPORTANT_LEAGUES = [int(id.strip()) for id in important_leagues_str.split(',')]
 # Other tiers: 45 seconds is optimal
 LOOP_WAIT_TIME = int(os.getenv('LOOP_WAIT_TIME', '120'))
 
+# Season configuration (API season year)
+SEASON = int(os.getenv('SEASON', '2025'))
+
 from pathlib import Path
 
 def get_executable_dir():
@@ -63,6 +64,10 @@ def get_executable_dir():
         # When not frozen, use the script's parent directory
             
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Ensure we always load the .env from the project root/executable dir
+ENV_PATH = Path(get_executable_dir()) / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 # Project structure
 
